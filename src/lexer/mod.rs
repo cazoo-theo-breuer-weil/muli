@@ -36,74 +36,107 @@ pub enum LexerState {
     Whitespace,
 }
 
-fn get_next_lexer_state(state: LexerState, character: char) -> Option<LexerState> {
-    match state {
-        LexerState::Add => None,
-        LexerState::Blank => match character {
-            '+' => Some(LexerState::Add),
-            character if character.is_digit(10) => Some(LexerState::Integer),
-            character if character.is_whitespace() => Some(LexerState::Whitespace),
-            _ => None,
-        },
-        LexerState::Integer => match character {
-            character if character.is_digit(10) => Some(LexerState::Integer),
-            _ => None,
-        },
-        LexerState::Whitespace => match character {
-            character if character.is_whitespace() => Some(LexerState::Whitespace),
-            _ => None,
-        },
+struct StateMachine {
+    buffer: String,
+    current_state: LexerState,
+    state_map: HashMap<LexerState, TokenType>,
+}
+
+impl StateMachine {
+    fn new() -> StateMachine {
+        StateMachine {
+            buffer: String::new(),
+            current_state: LexerState::Blank,
+            state_map: get_state_map(),
+        }
+    }
+
+    pub fn accept(&mut self, next_char: char) -> bool {
+        match self.get_next_state(next_char) {
+            Some(next_state) => {
+                self.current_state = next_state;
+                self.buffer.push(next_char);
+                true
+            }
+            None => false,
+        }
+    }
+
+    pub fn produce(&mut self) -> Result<Token, &'static str> {
+        match self.state_map.get(&self.current_state) {
+            Some(token_type) => {
+                let token = Token::new(*token_type, self.buffer.clone());
+                self.reset();
+                Ok(token)
+            }
+            None => Err("invalid production"),
+        }
+    }
+
+    fn reset(&mut self) {
+        self.current_state = LexerState::Blank;
+        self.buffer.clear();
+    }
+
+    fn get_next_state(&self, c: char) -> Option<LexerState> {
+        match self.current_state {
+            LexerState::Add => None,
+            LexerState::Blank => match c {
+                '+' => Some(LexerState::Add),
+                c if c.is_digit(10) => Some(LexerState::Integer),
+                c if c.is_whitespace() => Some(LexerState::Whitespace),
+                _ => None,
+            },
+            LexerState::Integer => match c {
+                c if c.is_digit(10) => Some(LexerState::Integer),
+                _ => None,
+            },
+            LexerState::Whitespace => match c {
+                c if c.is_whitespace() => Some(LexerState::Whitespace),
+                _ => None,
+            },
+        }
     }
 }
 
-pub fn stream_to_tokens(stream: &mut (impl Seek + Read)) -> Vec<Token> {
+pub fn get_state_map() -> HashMap<LexerState, TokenType> {
     let mut state_token_map: HashMap<LexerState, TokenType> = HashMap::new();
     state_token_map.insert(LexerState::Integer, TokenType::Integer);
     state_token_map.insert(LexerState::Add, TokenType::Add);
     state_token_map.insert(LexerState::Whitespace, TokenType::Whitespace);
 
+    state_token_map
+}
+
+pub fn stream_to_tokens(stream: &mut (impl Seek + Read)) -> Vec<Token> {
+    let mut state_machine = StateMachine::new();
     let mut buffer = [0; 1];
-    let mut lexer_state = LexerState::Blank;
-    let mut tokens = Vec::new();
-    let mut token_buffer = String::new();
+    let mut tokens: Vec<Token> = Vec::new();
 
     loop {
         if stream.read(&mut buffer).unwrap() == 0 {
-            match state_token_map.get(&lexer_state) {
-                Some(token_type) => {
-                    tokens.push(Token::new(*token_type, token_buffer.clone()));
-                    token_buffer.clear();
-                    lexer_state = LexerState::Blank;
+            match state_machine.produce() {
+                Ok(token) => {
+                    tokens.push(token);
                 }
-                None => {
-                    println!("invalid token");
+                Err(error) => {
+                    println!("{}", error);
                 }
             }
 
-            break
+            break;
         }
 
-        let character = buffer[0] as char;
-
-        match get_next_lexer_state(lexer_state, character) {
-            Some(next_state) => {
-                lexer_state = next_state;
-                token_buffer.push(character);
-            },
-            None => {
-                match state_token_map.get(&lexer_state) {
-                    Some(token_type) => {
-                        tokens.push(Token::new(*token_type, token_buffer.clone()));
-                        token_buffer.clear();
-                        lexer_state = LexerState::Blank;
-                        stream.seek(SeekFrom::Current(-1)).unwrap();
-                    }
-                    None => {
-                        println!("invalid token");
-                    }
+        if !state_machine.accept(buffer[0] as char) {
+            match state_machine.produce() {
+                Ok(token) => {
+                    tokens.push(token);
+                    stream.seek(SeekFrom::Current(-1)).unwrap();
                 }
-
-            },
+                Err(error) => {
+                    panic!("{}", error);
+                }
+            }
         }
     }
 
