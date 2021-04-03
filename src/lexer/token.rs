@@ -43,17 +43,18 @@ impl Span {
     }
 
     pub fn start() -> Span {
-        Span {
-            from: FilePosition::start(),
-            to: FilePosition::start(),
-        }
+        Span::new(FilePosition::start(), FilePosition::start())
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum TokenType {
-    Integer,
-    Add,
+    Assignment,
+    Identifier(String),
+    Integer(String),
+    PropertyAccess,
+    Semicolon,
+    VariableDeclaration,
     Whitespace,
 }
 
@@ -61,15 +62,10 @@ pub enum TokenType {
 pub struct Token {
     pub span: Span,
     pub token_type: TokenType,
-    pub value: String,
 }
 
 impl Token {
-    pub fn new(span: Span, of_type: TokenType, value: String) -> Token {
-        Token {
-            span,
-            token_type: of_type,
-            value,
-        }
+    pub fn new(span: Span, of_type: TokenType) -> Token {
+        Token { span, token_type: of_type }
     }
 }
