@@ -50,10 +50,16 @@ impl Span {
 #[derive(Clone, Debug, PartialEq)]
 pub enum TokenType {
     Assignment,
+    Comma,
+    FunctionBody,
+    FunctionParameters,
     Identifier(String),
     Integer(String),
+    LeftBracket,
     PropertyAccess,
+    RightBracket,
     Semicolon,
+    TypeDeclaration,
     VariableDeclaration,
     Whitespace,
 }

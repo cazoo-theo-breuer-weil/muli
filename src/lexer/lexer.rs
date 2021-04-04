@@ -8,10 +8,15 @@ use super::{Span, Token, TokenType};
 pub enum LexerState {
     Assignment,
     Blank,
+    Comma,
+    LeftBracket,
     Lexeme,
     Integer,
     PropertyAccess,
+    RightBracket,
     Semicolon,
+    StartFunctionBody,
+    FunctionBody,
     Whitespace,
 }
 
@@ -76,16 +81,17 @@ impl Lexer {
     fn get_next_state(&self, c: char) -> Option<LexerState> {
         match self.current_state {
             LexerState::Assignment => None,
-            LexerState::Lexeme => match c {
-                c if c.is_alphanumeric() => Some(LexerState::Lexeme),
-                '_' => Some(LexerState::Lexeme),
-                _ => None,
-            },
+            LexerState::Comma => None,
+            LexerState::FunctionBody => None,
             LexerState::Blank => match c {
                 '=' => Some(LexerState::Assignment),
                 '.' => Some(LexerState::PropertyAccess),
                 ';' => Some(LexerState::Semicolon),
                 '_' => Some(LexerState::Lexeme),
+                '-' => Some(LexerState::StartFunctionBody),
+                '(' => Some(LexerState::LeftBracket),
+                ')' => Some(LexerState::RightBracket),
+                ',' => Some(LexerState::Comma),
                 c if c.is_alphabetic() => Some(LexerState::Lexeme),
                 c if c.is_digit(10) => Some(LexerState::Integer),
                 c if c.is_whitespace() => Some(LexerState::Whitespace),
@@ -95,7 +101,18 @@ impl Lexer {
                 c if c.is_digit(10) => Some(LexerState::Integer),
                 _ => None,
             },
+            LexerState::LeftBracket => None,
+            LexerState::Lexeme => match c {
+                c if c.is_alphanumeric() => Some(LexerState::Lexeme),
+                '_' => Some(LexerState::Lexeme),
+                _ => None,
+            },
             LexerState::PropertyAccess => None,
+            LexerState::RightBracket => None,
+            LexerState::StartFunctionBody => match c {
+                '>' => Some(LexerState::FunctionBody),
+                _ => None,
+            },
             LexerState::Semicolon => None,
             LexerState::Whitespace => match c {
                 c if c.is_whitespace() => Some(LexerState::Whitespace),
@@ -107,15 +124,22 @@ impl Lexer {
     fn get_token(&mut self) -> Result<Token, &'static str> {
         let token_type = match self.current_state {
             LexerState::Assignment => Some(TokenType::Assignment),
+            LexerState::Blank => None,
+            LexerState::Comma => Some(TokenType::Comma),
+            LexerState::FunctionBody => Some(TokenType::FunctionBody),
+            LexerState::Integer => Some(TokenType::Integer(self.buffer.clone())),
+            LexerState::LeftBracket => Some(TokenType::LeftBracket),
             LexerState::Lexeme => match self.buffer.as_str() {
+                "fn" => Some(TokenType::FunctionParameters),
+                "type" => Some(TokenType::TypeDeclaration),
                 "var" => Some(TokenType::VariableDeclaration),
                 _ => Some(TokenType::Identifier(self.buffer.clone())),
             },
-            LexerState::Integer => Some(TokenType::Integer(self.buffer.clone())),
             LexerState::PropertyAccess => Some(TokenType::PropertyAccess),
+            LexerState::RightBracket => Some(TokenType::RightBracket),
             LexerState::Semicolon => Some(TokenType::Semicolon),
+            LexerState::StartFunctionBody => None,
             LexerState::Whitespace => Some(TokenType::Whitespace),
-            _ => None,
         };
 
         match token_type {
@@ -134,7 +158,7 @@ mod test {
     }
 
     #[test]
-    fn test_simple_assignment() {
+    fn simple_assignment() {
         let program = &mut Cursor::new("var variable = 3;");
 
         let expected = vec![
@@ -151,7 +175,7 @@ mod test {
     }
 
     #[test]
-    fn test_leading_underscore() {
+    fn leading_underscore() {
         let program = &mut Cursor::new("var _variable = 22;");
 
         let expected = vec![
@@ -168,7 +192,7 @@ mod test {
     }
 
     #[test]
-    fn test_interpolated_underscore() {
+    fn interpolated_underscore() {
         let program = &mut Cursor::new("var _var_iable = 456;");
 
         let expected = vec![
@@ -185,7 +209,7 @@ mod test {
     }
 
     #[test]
-    fn test_property_access() {
+    fn property_access() {
         let program = &mut Cursor::new("var that = this.thing;");
 
         let expected = vec![
@@ -201,5 +225,56 @@ mod test {
         let mut lexer = Lexer::new();
         let actual = map_result(lexer.lex(program));
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn type_declaration() {
+        let program = &mut Cursor::new("type newtype = int;");
+
+        let expected = vec![
+            TokenType::TypeDeclaration,
+            TokenType::Identifier("newtype".to_string()),
+            TokenType::Assignment,
+            TokenType::Identifier("int".to_string()),
+            TokenType::Semicolon,
+        ];
+
+        let mut lexer = Lexer::new();
+        let actual = map_result(lexer.lex(program));
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn function_declaration() {
+        let program = &mut Cursor::new("fn (a, b) -> 4;");
+
+        let expected = vec![
+            TokenType::FunctionParameters,
+            TokenType::LeftBracket,
+            TokenType::Identifier("a".to_string()),
+            TokenType::Comma,
+            TokenType::Identifier("b".to_string()),
+            TokenType::RightBracket,
+            TokenType::FunctionBody,
+            TokenType::Integer("4".to_string()),
+            TokenType::Semicolon,
+        ];
+
+        let mut lexer = Lexer::new();
+        let actual = map_result(lexer.lex(program));
+
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn small_program() {
+        let program = &mut Cursor::new("\
+            var add = fn (a, b) -> a.add(b);\n\
+            var result = add(4, 5)\n\
+            ");
+
+        let mut lexer = Lexer::new();
+        let actual = lexer.lex(program);
+        assert!(actual.is_ok());
     }
 }
